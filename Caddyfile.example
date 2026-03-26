@@ -1,4 +1,4 @@
-https://claude.storage.ac.cn {
+https://your-domain.example.com {
 	log {
 		output file /var/log/caddy/access.log {
 			roll_size 50mb
