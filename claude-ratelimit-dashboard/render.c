@@ -6,7 +6,7 @@
 
 #define SHANGHAI_OFFSET (8 * 3600)
 
-/* ---- Format a Shanghai time string ---- */
+/* ---- Format a Shanghai time string (used by ratelimit.log only) ---- */
 
 void fmt_shanghai(time_t ts, char *buf, int maxlen, const char *fmt) {
     time_t rt = ts + SHANGHAI_OFFSET;
@@ -28,7 +28,6 @@ static int cmp_last_seen_desc(const void *a, const void *b) {
 /* ---- Display prefix: "storage-xxxxx" ---- */
 
 static void display_prefix(const char *prefix, char *out, int maxlen) {
-    /* prefix is like "storage-b03e7..." or "storage-b03e7" */
     if (strncmp(prefix, "storage-", 8) == 0 && strlen(prefix) >= 13) {
         snprintf(out, maxlen, "storage-%.5s", prefix + 8);
     } else {
@@ -92,6 +91,50 @@ static const char HTML_TABLE_END[] =
     "    </div>\n"
     "  </div>\n";
 
+static const char HTML_SCRIPT[] =
+    "<script>\n"
+    "function fmtTime(ts) {\n"
+    "  if (!ts) return '-';\n"
+    "  var d = new Date(ts * 1000);\n"
+    "  var mo = String(d.getMonth()+1).padStart(2,'0');\n"
+    "  var da = String(d.getDate()).padStart(2,'0');\n"
+    "  var h = String(d.getHours()).padStart(2,'0');\n"
+    "  var m = String(d.getMinutes()).padStart(2,'0');\n"
+    "  var s = String(d.getSeconds()).padStart(2,'0');\n"
+    "  return mo+'-'+da+' '+h+':'+m+':'+s;\n"
+    "}\n"
+    "function fmtReset(ts) {\n"
+    "  if (!ts) return '-';\n"
+    "  var d = new Date(ts * 1000);\n"
+    "  var h = String(d.getHours()).padStart(2,'0');\n"
+    "  var m = String(d.getMinutes()).padStart(2,'0');\n"
+    "  return h+':'+m;\n"
+    "}\n"
+    "function updateTimes() {\n"
+    "  var now = Date.now() / 1000;\n"
+    "  document.querySelectorAll('[data-reset]').forEach(function(el) {\n"
+    "    var ts = parseInt(el.dataset.reset);\n"
+    "    if (!ts) { el.textContent = '-'; return; }\n"
+    "    if (now >= ts) { el.textContent = '-'; return; }\n"
+    "    el.textContent = fmtReset(ts);\n"
+    "  });\n"
+    "  document.querySelectorAll('[data-countdown]').forEach(function(el) {\n"
+    "    var ts = parseInt(el.dataset.countdown);\n"
+    "    if (!ts) { el.textContent = '-'; return; }\n"
+    "    var rem = Math.max(0, ts - now);\n"
+    "    if (rem <= 0) { el.textContent = '-'; return; }\n"
+    "    var h = Math.floor(rem / 3600);\n"
+    "    var m = Math.floor((rem %% 3600) / 60);\n"
+    "    el.textContent = h > 0 ? h+'h '+m+'m' : m+'m';\n"
+    "  });\n"
+    "  document.querySelectorAll('[data-lastseen]').forEach(function(el) {\n"
+    "    el.textContent = fmtTime(parseInt(el.dataset.lastseen));\n"
+    "  });\n"
+    "}\n"
+    "updateTimes();\n"
+    "setInterval(updateTimes, 1000);\n"
+    "</script>\n";
+
 static const char HTML_FOOT[] =
     "</div>\n"
     "</body>\n"
@@ -141,38 +184,15 @@ int render_html(char *buf, int maxlen) {
         int is_limited = was_limited;
         int newly_available = 0;
 
-        /* If reset time has passed, treat as available */
         if (is_limited && t->reset_ts > 0 && now >= t->reset_ts) {
             is_limited = 0;
             newly_available = 1;
         }
 
-        long remaining = 0;
-        if (is_limited && t->reset_ts > 0 && now < t->reset_ts)
-            remaining = t->reset_ts - now;
-        int hours = remaining / 3600;
-        int mins = (remaining % 3600) / 60;
-
-        char reset_str[64] = "-";
-        if (is_limited && t->reset_ts > 0)
-            fmt_shanghai(t->reset_ts, reset_str, sizeof(reset_str), "%H:%M");
-
         double d5 = t->util_5h >= 0 ? t->util_5h : 0;
         double d7 = t->util_7d >= 0 ? t->util_7d : 0;
         int p5 = (int)(d5 * 100); if (p5 > 100) p5 = 100;
         int p7 = (int)(d7 * 100); if (p7 > 100) p7 = 100;
-
-        char last_str[64] = "-";
-        if (t->last_seen > 0)
-            fmt_shanghai(t->last_seen, last_str, sizeof(last_str), "%m-%d %H:%M:%S");
-
-        char countdown[32] = "-";
-        if (is_limited && remaining > 0) {
-            if (hours > 0)
-                snprintf(countdown, sizeof(countdown), "%dh %dm", hours, mins);
-            else
-                snprintf(countdown, sizeof(countdown), "%dm", mins);
-        }
 
         char display[32];
         display_prefix(t->prefix, display, sizeof(display));
@@ -192,6 +212,11 @@ int render_html(char *buf, int maxlen) {
             badge_class = "bg-emerald-100 text-emerald-700 border-emerald-200";
             badge_text = "Available";
         }
+
+        /* Reset timestamp: only show if currently rate limited */
+        long reset_ts_val = (is_limited && t->reset_ts > 0) ? t->reset_ts : 0;
+        /* Countdown: only show if currently rate limited */
+        long countdown_val = (is_limited && t->reset_ts > 0) ? t->reset_ts : 0;
 
         n += snprintf(buf + n, maxlen - n,
             "          <tr class=\"hover:bg-gray-50/50 transition-colors%s\">\n",
@@ -225,13 +250,13 @@ int render_html(char *buf, int maxlen) {
               "</div></div></td>\n",
             (int)(d7 * 100), util_color(d7), p7);
 
-        /* Resets At, Countdown, Last Seen */
+        /* Resets At, Countdown, Last Seen — raw timestamps for JS */
         n += snprintf(buf + n, maxlen - n,
-            "            <td class=\"px-4 py-3 text-sm text-gray-600\">%s</td>\n"
-            "            <td class=\"px-4 py-3 text-sm text-gray-600\">%s</td>\n"
-            "            <td class=\"px-4 py-3 text-xs text-gray-400 mono\">%s</td>\n"
+            "            <td class=\"px-4 py-3 text-sm text-gray-600\" data-reset=\"%ld\">-</td>\n"
+            "            <td class=\"px-4 py-3 text-sm text-gray-600\" data-countdown=\"%ld\">-</td>\n"
+            "            <td class=\"px-4 py-3 text-xs text-gray-400 mono\" data-lastseen=\"%ld\">-</td>\n"
             "          </tr>\n",
-            reset_str, countdown, last_str);
+            reset_ts_val, countdown_val, (long)t->last_seen);
     }
 
     n += snprintf(buf + n, maxlen - n, "%s", HTML_TABLE_END);
@@ -244,6 +269,7 @@ int render_html(char *buf, int maxlen) {
             "</p>\n");
     }
 
+    n += snprintf(buf + n, maxlen - n, "%s", HTML_SCRIPT);
     n += snprintf(buf + n, maxlen - n, "%s", HTML_FOOT);
     return n;
 }
