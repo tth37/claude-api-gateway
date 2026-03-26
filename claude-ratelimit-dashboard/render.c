@@ -106,9 +106,11 @@ static const char HTML_SCRIPT[] =
     "function fmtReset(ts) {\n"
     "  if (!ts) return '-';\n"
     "  var d = new Date(ts * 1000);\n"
+    "  var mo = String(d.getMonth()+1).padStart(2,'0');\n"
+    "  var da = String(d.getDate()).padStart(2,'0');\n"
     "  var h = String(d.getHours()).padStart(2,'0');\n"
     "  var m = String(d.getMinutes()).padStart(2,'0');\n"
-    "  return h+':'+m;\n"
+    "  return mo+'-'+da+' '+h+':'+m;\n"
     "}\n"
     "function updateTimes() {\n"
     "  var now = Date.now() / 1000;\n"
@@ -124,8 +126,9 @@ static const char HTML_SCRIPT[] =
     "    var rem = Math.max(0, ts - now);\n"
     "    if (rem <= 0) { el.textContent = '-'; return; }\n"
     "    var h = Math.floor(rem / 3600);\n"
-    "    var m = Math.floor((rem %% 3600) / 60);\n"
-    "    el.textContent = h > 0 ? h+'h '+m+'m' : m+'m';\n"
+    "    var m = Math.floor((rem % 3600) / 60);\n"
+    "    var s = Math.floor(rem % 60);\n"
+    "    el.textContent = h > 0 ? h+'h '+m+'m '+s+'s' : m+'m '+s+'s';\n"
     "  });\n"
     "  document.querySelectorAll('[data-lastseen]').forEach(function(el) {\n"
     "    el.textContent = fmtTime(parseInt(el.dataset.lastseen));\n"
@@ -219,8 +222,9 @@ int render_html(char *buf, int maxlen) {
         long countdown_val = (is_limited && t->reset_ts > 0) ? t->reset_ts : 0;
 
         n += snprintf(buf + n, maxlen - n,
-            "          <tr class=\"hover:bg-gray-50/50 transition-colors%s\">\n",
-            stale ? " opacity-50" : "");
+            stale ?
+            "          <tr class=\"hover:bg-gray-50/50 transition-colors opacity-50\" title=\"No activity in the past 5 hours — usage data may be outdated\">\n" :
+            "          <tr class=\"hover:bg-gray-50/50 transition-colors\">\n");
         n += snprintf(buf + n, maxlen - n,
             "            <td class=\"px-4 py-3\">"
               "<span class=\"mono text-sm font-medium text-gray-900\">%s</span>"
