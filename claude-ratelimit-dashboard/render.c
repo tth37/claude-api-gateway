@@ -177,6 +177,8 @@ int render_html(char *buf, int maxlen) {
         char display[32];
         display_prefix(t->prefix, display, sizeof(display));
 
+        int stale = (now - t->last_seen > 5 * 3600);
+
         /* Status badge */
         const char *badge_class, *badge_text;
         if (is_limited) {
@@ -192,7 +194,9 @@ int render_html(char *buf, int maxlen) {
         }
 
         n += snprintf(buf + n, maxlen - n,
-            "          <tr class=\"hover:bg-gray-50/50 transition-colors\">\n"
+            "          <tr class=\"hover:bg-gray-50/50 transition-colors%s\">\n",
+            stale ? " opacity-50" : "");
+        n += snprintf(buf + n, maxlen - n,
             "            <td class=\"px-4 py-3\">"
               "<span class=\"mono text-sm font-medium text-gray-900\">%s</span>"
             "</td>\n"
