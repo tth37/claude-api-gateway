@@ -11,12 +11,12 @@
 #include <arpa/inet.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include "render.h"
 
 #define DEFAULT_PORT 9124
 #define LISTEN_ADDR "127.0.0.1"
 #define BUF_SIZE 65536
-#define MAX_TOKENS 64
-#define TOKEN_PREFIX_LEN 20
+#define PREFIX_DISPLAY_LEN 13  /* "storage-" (8) + 5 hex chars */
 #define DEFAULT_LOG_PATH "/var/log/caddy/access.log"
 #define RATELIMIT_LOG "/var/log/caddy/ratelimit.log"
 #define DEFAULT_STATE_PATH "/var/lib/caddy/ratelimit-state.json"
@@ -26,21 +26,8 @@ static int g_port = DEFAULT_PORT;
 static const char *g_log_path = DEFAULT_LOG_PATH;
 static const char *g_state_path = DEFAULT_STATE_PATH;
 
-typedef struct {
-    char prefix[32];
-    int  active;
-    long retry_after;
-    long reset_ts;
-    double util_5h;
-    double util_7d;
-    char status_5h[16];
-    char status_7d[16];
-    char window[16];
-    time_t last_seen;
-} token_state_t;
-
-static token_state_t g_tokens[MAX_TOKENS];
-static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
+token_state_t g_tokens[MAX_TOKENS];
+pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /* ---- Simple JSON field extraction ---- */
 
@@ -86,6 +73,18 @@ static double json_get_double(const char *json, const char *key) {
     while (*p == 0x20) p++;
     if (*p == 0x5b) { p++; while (*p == 0x20) p++; }
     return atof(p);
+}
+
+/* ---- Truncate prefix to "storage-xxxxx" format ---- */
+
+static void truncate_prefix(char *prefix) {
+    /* Strip trailing dots from old-format prefixes (e.g. "storage-b03e...") */
+    int len = strlen(prefix);
+    while (len > 0 && prefix[len - 1] == '.') prefix[--len] = '\0';
+    /* Truncate to storage- + 5 hex chars */
+    if (strncmp(prefix, "storage-", 8) == 0 && len > PREFIX_DISPLAY_LEN) {
+        prefix[PREFIX_DISPLAY_LEN] = '\0';
+    }
 }
 
 /* ---- Persistence ---- */
@@ -142,7 +141,33 @@ static void load_state(void) {
 
         token_state_t *t = &g_tokens[slot];
         memset(t, 0, sizeof(*t));
-        json_get_str(obj, "prefix", t->prefix, sizeof(t->prefix));
+        char tmp_prefix[32];
+        json_get_str(obj, "prefix", tmp_prefix, sizeof(tmp_prefix));
+        truncate_prefix(tmp_prefix);
+
+        /* Check for duplicates after truncation — keep the one with latest last_seen */
+        time_t this_last_seen = (time_t)json_get_long(obj, "last_seen");
+        int dup = -1;
+        for (int d = 0; d < slot; d++) {
+            if (g_tokens[d].active && strcmp(g_tokens[d].prefix, tmp_prefix) == 0) {
+                dup = d;
+                break;
+            }
+        }
+        if (dup >= 0) {
+            /* Duplicate: keep whichever has the more recent last_seen */
+            if (this_last_seen > g_tokens[dup].last_seen) {
+                t = &g_tokens[dup]; /* overwrite the older one */
+            } else {
+                p = end + 1;
+                continue; /* skip this one, existing is newer */
+            }
+        } else {
+            t = &g_tokens[slot];
+        }
+
+        memset(t, 0, sizeof(*t));
+        strncpy(t->prefix, tmp_prefix, sizeof(t->prefix) - 1);
         t->retry_after = json_get_long(obj, "retry_after");
         t->reset_ts = json_get_long(obj, "reset_ts");
         t->util_5h = json_get_double(obj, "util_5h");
@@ -150,9 +175,9 @@ static void load_state(void) {
         json_get_str(obj, "status_5h", t->status_5h, sizeof(t->status_5h));
         json_get_str(obj, "status_7d", t->status_7d, sizeof(t->status_7d));
         json_get_str(obj, "window", t->window, sizeof(t->window));
-        t->last_seen = (time_t)json_get_long(obj, "last_seen");
+        t->last_seen = this_last_seen;
         t->active = 1;
-        slot++;
+        if (dup < 0) slot++;
         p = end + 1;
     }
     free(buf);
@@ -169,13 +194,12 @@ static int extract_token_prefix(const char *json, char *out, int maxlen) {
         p = strstr(json, "storage-");
         if (!p) return -1;
     } else {
-        p += 7;
+        p += 7; /* skip "Bearer " */
     }
     int i = 0;
-    while (*p && *p != '"' && i < maxlen - 1 && i < (int)(8 + TOKEN_PREFIX_LEN))
+    while (*p && *p != '"' && i < maxlen - 1 && i < PREFIX_DISPLAY_LEN)
         out[i++] = *p++;
     out[i] = '\0';
-    if (i > 12) { out[12] = '.'; out[13] = '.'; out[14] = '.'; out[15] = '\0'; }
     return 0;
 }
 
@@ -201,7 +225,6 @@ static token_state_t *find_or_alloc(const char *prefix) {
 }
 
 static void process_line(const char *line) {
-    /* Must have X-Debug-Token to identify which token this is */
     if (!strstr(line, "X-Debug-Token")) return;
 
     char prefix[32];
@@ -210,16 +233,13 @@ static void process_line(const char *line) {
     long status = json_get_long(line, "status");
     int is_429 = (status == 429);
 
-    /* Check if rate limit headers are present */
     double u5 = json_get_double(line, "Anthropic-Ratelimit-Unified-5h-Utilization");
     double u7 = json_get_double(line, "Anthropic-Ratelimit-Unified-7d-Utilization");
-    /* If no utilization headers at all, skip (e.g. auth errors) */
     if (u5 < 0 && u7 < 0 && !is_429) return;
 
     pthread_mutex_lock(&g_lock);
     token_state_t *t = find_or_alloc(prefix);
 
-    /* Always update utilization and status from headers when present */
     if (u5 >= 0) t->util_5h = u5;
     if (u7 >= 0) t->util_7d = u7;
 
@@ -231,7 +251,6 @@ static void process_line(const char *line) {
     if (json_get_str(line, "Anthropic-Ratelimit-Unified-Representative-Claim", tmp, sizeof(tmp)) == 0)
         strncpy(t->window, tmp, sizeof(t->window) - 1);
 
-    /* Only update retry/reset on 429 */
     if (is_429) {
         t->retry_after = json_get_long(line, "Retry-After");
         long reset = json_get_long(line, "Anthropic-Ratelimit-Unified-5h-Reset");
@@ -239,7 +258,6 @@ static void process_line(const char *line) {
         if (reset > 0) t->reset_ts = reset;
     }
 
-    /* If status changed to allowed and we had a reset_ts, clear it */
     if (strcmp(t->status_5h, "allowed") == 0 && strcmp(t->status_7d, "allowed") == 0) {
         t->reset_ts = 0;
         t->retry_after = 0;
@@ -250,7 +268,6 @@ static void process_line(const char *line) {
     save_state();
     pthread_mutex_unlock(&g_lock);
 
-    /* Only log 429s to the ratelimit log */
     if (is_429) {
         FILE *rl = fopen(RATELIMIT_LOG, "a");
         if (rl) {
@@ -308,188 +325,12 @@ static void *log_tailer(void *arg) {
     return NULL;
 }
 
-/* ---- Format a Shanghai time string ---- */
-static void fmt_shanghai(time_t ts, char *buf, int maxlen, const char *fmt) {
-    time_t rt = ts + SHANGHAI_OFFSET;
-    struct tm tm;
-    gmtime_r(&rt, &tm);
-    strftime(buf, maxlen, fmt, &tm);
-}
-
-/* ---- HTML rendering ---- */
-
-static int render_html(char *buf, int maxlen) {
-    time_t now = time(NULL);
-    int n = 0;
-
-    n += snprintf(buf + n, maxlen - n,
-        "HTTP/1.1 200 OK\r\n"
-        "Content-Type: text/html; charset=utf-8\r\n"
-        "Connection: close\r\n\r\n"
-        "<!DOCTYPE html><html><head>"
-        "<meta charset='utf-8'>"
-        "<title>Rate Limit Status</title>"
-        "<style>"
-        "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;"
-        "max-width:960px;margin:40px auto;padding:0 20px;background:#f5f5f5;color:#333}"
-        "h1{font-size:1.4em;color:#555;border-bottom:2px solid #ddd;padding-bottom:10px}"
-        "table{width:100%%;border-collapse:collapse;background:white;border-radius:8px;"
-        "overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1)}"
-        "th{background:#667;color:white;padding:12px 16px;text-align:left;font-weight:500}"
-        "td{padding:10px 16px;border-bottom:1px solid #eee}"
-        "tr:last-child td{border-bottom:none}"
-        ".limited{color:#c0392b;font-weight:600}"
-        ".available{color:#27ae60;font-weight:600}"
-        ".muted{color:#999;font-size:0.85em}"
-        ".token{font-family:monospace;font-size:0.95em}"
-        ".util-bar{width:80px;height:8px;background:#eee;border-radius:4px;display:inline-block;"
-        "vertical-align:middle;margin-left:6px}"
-        ".util-fill{height:100%%;border-radius:4px}"
-        ".util-ok{background:#27ae60}"
-        ".util-warn{background:#f39c12}"
-        ".util-over{background:#c0392b}"
-        ".empty{text-align:center;padding:40px;color:#999}"
-        "</style></head><body>"
-        "<h1>Claude API Rate Limit Status</h1>"
-        "<table><tr>"
-        "<th>Token</th><th>Status</th><th>5h Usage</th>"
-        "<th>7d Usage</th><th>Resets At</th><th>Available In</th>"
-        "<th>Last Updated</th>"
-        "</tr>");
-
-    pthread_mutex_lock(&g_lock);
-    int count = 0;
-    for (int i = 0; i < MAX_TOKENS; i++) {
-        if (!g_tokens[i].active) continue;
-        token_state_t *t = &g_tokens[i];
-
-        int is_limited = (strcmp(t->status_5h, "rejected") == 0 ||
-                          strcmp(t->status_7d, "rejected") == 0);
-        /* If reset time has passed, treat as available */
-        if (is_limited && t->reset_ts > 0 && now >= t->reset_ts)
-            is_limited = 0;
-
-        long remaining = 0;
-        if (is_limited && t->reset_ts > 0 && now < t->reset_ts)
-            remaining = t->reset_ts - now;
-        int hours = remaining / 3600;
-        int mins = (remaining % 3600) / 60;
-
-        char reset_str[64] = "-";
-        if (is_limited && t->reset_ts > 0)
-            fmt_shanghai(t->reset_ts, reset_str, sizeof(reset_str), "%H:%M");
-
-        double display_5h = t->util_5h >= 0 ? t->util_5h : 0;
-        double display_7d = t->util_7d >= 0 ? t->util_7d : 0;
-
-        const char *util5_class = display_5h >= 1.0 ? "util-over" :
-                                  display_5h >= 0.8 ? "util-warn" : "util-ok";
-        const char *util7_class = display_7d >= 1.0 ? "util-over" :
-                                  display_7d >= 0.8 ? "util-warn" : "util-ok";
-        int util5_pct = (int)(display_5h * 100);
-        if (util5_pct > 100) util5_pct = 100;
-        int util7_pct = (int)(display_7d * 100);
-        if (util7_pct > 100) util7_pct = 100;
-
-        char last_updated_str[64] = "-";
-        if (t->last_seen > 0)
-            fmt_shanghai(t->last_seen, last_updated_str, sizeof(last_updated_str),
-                         "%m-%d %H:%M:%S");
-
-        char countdown[32] = "-";
-        if (is_limited && remaining > 0) {
-            if (hours > 0)
-                snprintf(countdown, sizeof(countdown), "%dh %dm", hours, mins);
-            else
-                snprintf(countdown, sizeof(countdown), "%dm", mins);
-        }
-
-        n += snprintf(buf + n, maxlen - n,
-            "<tr>"
-            "<td class='token'>%s</td>"
-            "<td class='%s'>%s</td>"
-            "<td>%d%%<div class='util-bar'><div class='util-fill %s' "
-            "style='width:%d%%'></div></div></td>"
-            "<td>%d%%<div class='util-bar'><div class='util-fill %s' "
-            "style='width:%d%%'></div></div></td>"
-            "<td>%s</td>"
-            "<td>%s</td>"
-            "<td class='muted'>%s</td>"
-            "</tr>",
-            t->prefix,
-            is_limited ? "limited" : "available",
-            is_limited ? "RATE LIMITED" : "Available",
-            (int)(display_5h * 100), util5_class, util5_pct,
-            (int)(display_7d * 100), util7_class, util7_pct,
-            reset_str,
-            countdown,
-            last_updated_str);
-        count++;
-    }
-    pthread_mutex_unlock(&g_lock);
-
-    if (count == 0) {
-        n += snprintf(buf + n, maxlen - n,
-            "<tr><td colspan='7' class='empty'>"
-            "No tokens tracked yet.</td></tr>");
-    }
-
-    n += snprintf(buf + n, maxlen - n, "</table></body></html>");
-    return n;
-}
-
-/* ---- JSON API ---- */
-
-static int render_json(char *buf, int maxlen) {
-    time_t now = time(NULL);
-    int n = 0;
-    n += snprintf(buf + n, maxlen - n,
-        "HTTP/1.1 200 OK\r\n"
-        "Content-Type: application/json\r\n"
-        "Connection: close\r\n\r\n"
-        "{\"tokens\":[");
-
-    pthread_mutex_lock(&g_lock);
-    int first = 1;
-    for (int i = 0; i < MAX_TOKENS; i++) {
-        if (!g_tokens[i].active) continue;
-        token_state_t *t = &g_tokens[i];
-        int is_limited = (strcmp(t->status_5h, "rejected") == 0 ||
-                          strcmp(t->status_7d, "rejected") == 0);
-        /* If reset time has passed, treat as available */
-        if (is_limited && t->reset_ts > 0 && now >= t->reset_ts)
-            is_limited = 0;
-        long remaining = 0;
-        if (is_limited && t->reset_ts > 0 && now < t->reset_ts)
-            remaining = t->reset_ts - now;
-        if (!first) n += snprintf(buf + n, maxlen - n, ",");
-        first = 0;
-        n += snprintf(buf + n, maxlen - n,
-            "{\"prefix\":\"%s\",\"limited\":%s,"
-            "\"retry_after\":%ld,\"reset_ts\":%ld,"
-            "\"util_5h\":%.2f,\"util_7d\":%.2f,"
-            "\"status_5h\":\"%s\",\"status_7d\":\"%s\","
-            "\"window\":\"%s\",\"last_seen\":%ld}",
-            t->prefix,
-            is_limited ? "true" : "false",
-            remaining, t->reset_ts,
-            t->util_5h >= 0 ? t->util_5h : 0,
-            t->util_7d >= 0 ? t->util_7d : 0,
-            t->status_5h, t->status_7d,
-            t->window, (long)t->last_seen);
-    }
-    pthread_mutex_unlock(&g_lock);
-    n += snprintf(buf + n, maxlen - n, "]}");
-    return n;
-}
-
 /* ---- HTTP server ---- */
 
 int main(int argc, char *argv[]) {
     signal(SIGPIPE, SIG_IGN);
     memset(g_tokens, 0, sizeof(g_tokens));
 
-    /* Parse args: [-p port] [-l log_path] [-s state_path] */
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-p") == 0 && i + 1 < argc) g_port = atoi(argv[++i]);
         else if (strcmp(argv[i], "-l") == 0 && i + 1 < argc) g_log_path = argv[++i];
