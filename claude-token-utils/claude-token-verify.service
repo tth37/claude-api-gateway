@@ -1,0 +1,12 @@
+[Unit]
+Description=Claude Token Verify Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/claude-token-verify
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

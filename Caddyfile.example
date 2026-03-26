@@ -1,0 +1,40 @@
+https://claude.storage.ac.cn {
+	log {
+		output file /var/log/caddy/access.log {
+			roll_size 50mb
+			roll_keep 5
+		}
+		format json
+	}
+
+	handle /status* {
+		uri strip_prefix /status
+		reverse_proxy 127.0.0.1:9124
+	}
+
+	handle {
+		forward_auth http://127.0.0.1:9123 {
+			uri /verify
+			copy_headers X-Real-Authorization
+		}
+
+		reverse_proxy https://api.anthropic.com {
+			header_up Authorization "{http.request.header.X-Real-Authorization}"
+			header_up -X-Real-Authorization
+			header_up -X-Forwarded-For
+			header_up -X-Real-IP
+			header_up -Forwarded
+			header_up -X-Forwarded-Proto
+			header_up -X-Forwarded-Host
+			header_up -X-Forwarded-Port
+			header_up -Via
+			header_up -X-Api-Key
+
+			handle_response {
+				header X-Debug-Token "{http.request.header.Authorization}"
+				copy_response_headers
+				copy_response
+			}
+		}
+	}
+}

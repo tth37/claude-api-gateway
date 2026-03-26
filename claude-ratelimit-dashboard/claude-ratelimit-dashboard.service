@@ -1,0 +1,12 @@
+[Unit]
+Description=Claude Rate Limit Dashboard
+After=caddy.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/claude-ratelimit-dashboard
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
