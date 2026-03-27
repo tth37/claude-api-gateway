@@ -64,19 +64,24 @@ systemctl restart claude-api-gateway
 | `-l` | Caddy access log path | `/var/log/caddy/access.log` |
 | `-s` | JSON state file path | `/var/lib/caddy/ratelimit-state.json` |
 
-## Building
+## Building & Installation
 
 ```bash
 make clean && make
 sudo make install
+sudo claude-api-gateway service install
+sudo claude-api-gateway service start
 ```
 
-Source code is deployed to `/opt/claude-api-gateway/` on the server.
+### Service Management
 
 ```bash
-cd /opt/claude-api-gateway
-make clean && make && make install
-systemctl restart claude-api-gateway
+claude-api-gateway service install     # Install and enable systemd service
+claude-api-gateway service uninstall   # Stop, disable, and remove service
+claude-api-gateway service start       # Start the service
+claude-api-gateway service stop        # Stop the service
+claude-api-gateway service restart     # Restart the service
+claude-api-gateway service status      # Show service status
 ```
 
 ## Logs & State

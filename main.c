@@ -5,6 +5,7 @@ extern int encrypt_main(int argc, char **argv);
 extern int verifier_main(int argc, char **argv);
 extern int dashboard_main(int argc, char **argv);
 extern int server_main(int argc, char **argv);
+extern int service_main(int argc, char **argv);
 
 static void print_usage(const char *prog) {
     fprintf(stderr,
@@ -17,6 +18,10 @@ static void print_usage(const char *prog) {
         "  start verifier [-p port]     Start the token verifier only\n"
         "  start dashboard [-p port]    Start the dashboard only\n"
         "                  [-l log] [-s state]\n"
+        "  service install              Install systemd service\n"
+        "  service uninstall            Remove systemd service\n"
+        "  service start|stop|restart   Control the service\n"
+        "  service status               Show service status\n"
         "  help                         Show this help\n",
         prog);
 }
@@ -29,7 +34,7 @@ int main(int argc, char *argv[]) {
 
     if (strcmp(argv[1], "start") == 0) {
         if (argc < 3) {
-            fprintf(stderr, "Error: 'start' requires a service name (verifier or dashboard)\n");
+            fprintf(stderr, "Error: 'start' requires a service name (server, verifier, or dashboard)\n");
             print_usage(argv[0]);
             return 1;
         }
@@ -42,6 +47,9 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Unknown service: %s\n", argv[2]);
         return 1;
     }
+
+    if (strcmp(argv[1], "service") == 0)
+        return service_main(argc - 1, argv + 1);
 
     if (strcmp(argv[1], "help") == 0 || strcmp(argv[1], "--help") == 0 ||
         strcmp(argv[1], "-h") == 0) {
