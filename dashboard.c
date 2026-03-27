@@ -2,16 +2,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <errno.h>
-#include <signal.h>
 #include <time.h>
 #include <pthread.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include "render.h"
+#include "httpserver.h"
 
 #define DEFAULT_PORT 9124
 #define LISTEN_ADDR "127.0.0.1"
@@ -78,10 +74,8 @@ static double json_get_double(const char *json, const char *key) {
 /* ---- Truncate prefix to "storage-xxxxx" format ---- */
 
 static void truncate_prefix(char *prefix) {
-    /* Strip trailing dots from old-format prefixes (e.g. "storage-b03e...") */
     int len = strlen(prefix);
     while (len > 0 && prefix[len - 1] == '.') prefix[--len] = '\0';
-    /* Truncate to storage- + 5 hex chars */
     if (strncmp(prefix, "storage-", 8) == 0 && len > PREFIX_DISPLAY_LEN) {
         prefix[PREFIX_DISPLAY_LEN] = '\0';
     }
@@ -139,13 +133,11 @@ static void load_state(void) {
         memcpy(obj, p, objlen);
         obj[objlen] = '\0';
 
-        token_state_t *t = &g_tokens[slot];
-        memset(t, 0, sizeof(*t));
+        token_state_t *t;
         char tmp_prefix[32];
         json_get_str(obj, "prefix", tmp_prefix, sizeof(tmp_prefix));
         truncate_prefix(tmp_prefix);
 
-        /* Check for duplicates after truncation — keep the one with latest last_seen */
         time_t this_last_seen = (time_t)json_get_long(obj, "last_seen");
         int dup = -1;
         for (int d = 0; d < slot; d++) {
@@ -155,12 +147,11 @@ static void load_state(void) {
             }
         }
         if (dup >= 0) {
-            /* Duplicate: keep whichever has the more recent last_seen */
             if (this_last_seen > g_tokens[dup].last_seen) {
-                t = &g_tokens[dup]; /* overwrite the older one */
+                t = &g_tokens[dup];
             } else {
                 p = end + 1;
-                continue; /* skip this one, existing is newer */
+                continue;
             }
         } else {
             t = &g_tokens[slot];
@@ -194,7 +185,7 @@ static int extract_token_prefix(const char *json, char *out, int maxlen) {
         p = strstr(json, "storage-");
         if (!p) return -1;
     } else {
-        p += 7; /* skip "Bearer " */
+        p += 7;
     }
     int i = 0;
     while (*p && *p != '"' && i < maxlen - 1 && i < PREFIX_DISPLAY_LEN)
@@ -297,7 +288,7 @@ static void *log_tailer(void *arg) {
     (void)arg;
     FILE *f = NULL;
     long last_pos = 0;
-    long last_inode = 0;
+    ino_t last_inode = 0;
 
     while (1) {
         if (!f) {
@@ -325,10 +316,21 @@ static void *log_tailer(void *arg) {
     return NULL;
 }
 
-/* ---- HTTP server ---- */
+/* ---- Dashboard HTTP handler ---- */
 
-int main(int argc, char *argv[]) {
-    signal(SIGPIPE, SIG_IGN);
+static char *g_response_buf;
+
+static void handle_dashboard(int client_fd, const char *request, int request_len) {
+    (void)request_len;
+    int len;
+    if (strstr(request, "GET /api") || strstr(request, "GET /json"))
+        len = render_json(g_response_buf, BUF_SIZE * 4);
+    else
+        len = render_html(g_response_buf, BUF_SIZE * 4);
+    write(client_fd, g_response_buf, len);
+}
+
+int dashboard_main(int argc, char **argv) {
     memset(g_tokens, 0, sizeof(g_tokens));
 
     for (int i = 1; i < argc; i++) {
@@ -347,42 +349,15 @@ int main(int argc, char *argv[]) {
     pthread_detach(tailer_tid);
     fprintf(stderr, "Log tailer started for %s\n", g_log_path);
 
-    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (server_fd < 0) { perror("socket"); return 1; }
-    int opt = 1;
-    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    g_response_buf = malloc(BUF_SIZE * 4);
+    if (!g_response_buf) { perror("malloc"); return 1; }
 
-    struct sockaddr_in addr = { .sin_family = AF_INET, .sin_port = htons(g_port) };
-    inet_pton(AF_INET, LISTEN_ADDR, &addr.sin_addr);
-    if (bind(server_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        perror("bind"); return 1;
-    }
-    if (listen(server_fd, 64) < 0) { perror("listen"); return 1; }
-    fprintf(stderr, "claude-ratelimit-dashboard listening on %s:%d\n", LISTEN_ADDR, g_port);
+    int server_fd = http_server_create(LISTEN_ADDR, g_port);
+    if (server_fd < 0) return 1;
 
-    char *response_buf = malloc(BUF_SIZE * 4);
-    if (!response_buf) { perror("malloc"); return 1; }
+    fprintf(stderr, "claude-api-gateway dashboard listening on %s:%d\n", LISTEN_ADDR, g_port);
+    http_server_run(server_fd, handle_dashboard);
 
-    while (1) {
-        int client_fd = accept(server_fd, NULL, NULL);
-        if (client_fd < 0) { if (errno == EINTR) continue; perror("accept"); continue; }
-
-        char req[4096];
-        ssize_t nr = read(client_fd, req, sizeof(req) - 1);
-        if (nr <= 0) { close(client_fd); continue; }
-        req[nr] = '\0';
-
-        int len;
-        if (strstr(req, "GET /api") || strstr(req, "GET /json"))
-            len = render_json(response_buf, BUF_SIZE * 4);
-        else
-            len = render_html(response_buf, BUF_SIZE * 4);
-
-        write(client_fd, response_buf, len);
-        close(client_fd);
-    }
-
-    free(response_buf);
-    close(server_fd);
+    free(g_response_buf);
     return 0;
 }

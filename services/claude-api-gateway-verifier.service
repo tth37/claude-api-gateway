@@ -1,10 +1,10 @@
 [Unit]
-Description=Claude Token Verify Service
+Description=Claude API Gateway - Token Verifier
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/claude-token-verify
+ExecStart=/usr/local/bin/claude-api-gateway start verifier
 Restart=always
 RestartSec=3
 

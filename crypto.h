@@ -4,7 +4,7 @@
 #define KEY_SIZE 32       /* AES-256 */
 #define IV_SIZE 12        /* GCM standard */
 #define TAG_SIZE 16       /* GCM tag */
-#define KEY_PATH "/etc/claude-tokens/encryption.key"
+#define KEY_PATH "/etc/claude-api-gateway/encryption.key"
 #define MAX_TOKEN_LEN 512
 
 /* Load 256-bit key from hex file. Returns 0 on success, -1 on error. */
