@@ -10,9 +10,9 @@
 #define STORAGE_PREFIX "storage-"
 #define STORAGE_PREFIX_LEN 8
 
-static unsigned char g_key[KEY_SIZE];
+unsigned char g_key[KEY_SIZE];
 
-static char *extract_bearer_token(const char *request) {
+char *extract_bearer_token(const char *request) {
     const char *pos = request;
     while (*pos) {
         if ((*pos == 'A' || *pos == 'a') &&
@@ -37,7 +37,7 @@ static char *extract_bearer_token(const char *request) {
     return NULL;
 }
 
-static void handle_verify(int client_fd, const char *request, int request_len) {
+void handle_verify(int client_fd, const char *request, int request_len) {
     (void)request_len;
     char *token = extract_bearer_token(request);
 

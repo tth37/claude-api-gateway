@@ -325,9 +325,9 @@ static void *log_tailer(void *arg) {
 
 /* ---- Dashboard HTTP handler ---- */
 
-static char *g_response_buf;
+char *g_response_buf;
 
-static void handle_dashboard(int client_fd, const char *request, int request_len) {
+void handle_dashboard(int client_fd, const char *request, int request_len) {
     (void)request_len;
     int len;
     if (strstr(request, "GET /api") || strstr(request, "GET /json"))
@@ -337,27 +337,35 @@ static void handle_dashboard(int client_fd, const char *request, int request_len
     write(client_fd, g_response_buf, len);
 }
 
-int dashboard_main(int argc, char **argv) {
-    memset(g_tokens, 0, sizeof(g_tokens));
+int dashboard_init(const char *log_path, const char *state_path) {
+    if (log_path) g_log_path = log_path;
+    if (state_path) g_state_path = state_path;
 
+    memset(g_tokens, 0, sizeof(g_tokens));
+    load_state();
+
+    pthread_t tailer_tid;
+    if (pthread_create(&tailer_tid, NULL, log_tailer, NULL) != 0) {
+        fprintf(stderr, "Failed to create log tailer thread\n");
+        return -1;
+    }
+    pthread_detach(tailer_tid);
+    fprintf(stderr, "Log tailer started for %s\n", g_log_path);
+
+    g_response_buf = malloc(BUF_SIZE * 4);
+    if (!g_response_buf) { perror("malloc"); return -1; }
+
+    return 0;
+}
+
+int dashboard_main(int argc, char **argv) {
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-p") == 0 && i + 1 < argc) g_port = atoi(argv[++i]);
         else if (strcmp(argv[i], "-l") == 0 && i + 1 < argc) g_log_path = argv[++i];
         else if (strcmp(argv[i], "-s") == 0 && i + 1 < argc) g_state_path = argv[++i];
     }
 
-    load_state();
-
-    pthread_t tailer_tid;
-    if (pthread_create(&tailer_tid, NULL, log_tailer, NULL) != 0) {
-        fprintf(stderr, "Failed to create log tailer thread\n");
-        return 1;
-    }
-    pthread_detach(tailer_tid);
-    fprintf(stderr, "Log tailer started for %s\n", g_log_path);
-
-    g_response_buf = malloc(BUF_SIZE * 4);
-    if (!g_response_buf) { perror("malloc"); return 1; }
+    if (dashboard_init(NULL, NULL) != 0) return 1;
 
     int server_fd = http_server_create(LISTEN_ADDR, g_port);
     if (server_fd < 0) return 1;

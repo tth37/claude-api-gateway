@@ -4,6 +4,7 @@
 extern int encrypt_main(int argc, char **argv);
 extern int verifier_main(int argc, char **argv);
 extern int dashboard_main(int argc, char **argv);
+extern int server_main(int argc, char **argv);
 
 static void print_usage(const char *prog) {
     fprintf(stderr,
@@ -11,8 +12,10 @@ static void print_usage(const char *prog) {
         "\n"
         "Commands:\n"
         "  encrypt <raw-token>          Encrypt an API token\n"
-        "  start verifier [-p port]     Start the token verification server\n"
-        "  start dashboard [-p port]    Start the rate limit dashboard\n"
+        "  start server [-p port]       Start the combined server (verifier + dashboard)\n"
+        "               [-l log] [-s state]\n"
+        "  start verifier [-p port]     Start the token verifier only\n"
+        "  start dashboard [-p port]    Start the dashboard only\n"
         "                  [-l log] [-s state]\n"
         "  help                         Show this help\n",
         prog);
@@ -30,6 +33,8 @@ int main(int argc, char *argv[]) {
             print_usage(argv[0]);
             return 1;
         }
+        if (strcmp(argv[2], "server") == 0)
+            return server_main(argc - 2, argv + 2);
         if (strcmp(argv[2], "verifier") == 0)
             return verifier_main(argc - 2, argv + 2);
         if (strcmp(argv[2], "dashboard") == 0)

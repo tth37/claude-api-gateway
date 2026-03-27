@@ -9,7 +9,7 @@ https://your-domain.example.com {
 
 	handle /status* {
 		uri strip_prefix /status
-		reverse_proxy 127.0.0.1:9124
+		reverse_proxy 127.0.0.1:9123
 	}
 
 	handle {

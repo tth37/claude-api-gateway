@@ -9,8 +9,10 @@ claude-api-gateway <command> [args]
 
 Commands:
   encrypt <raw-token>          Encrypt an API token
-  start verifier [-p port]     Start the token verification server
-  start dashboard [-p port]    Start the rate limit dashboard
+  start server [-p port]       Start the combined server (verifier + dashboard)
+               [-l log] [-s state]
+  start verifier [-p port]     Start the token verifier only
+  start dashboard [-p port]    Start the dashboard only
                   [-l log] [-s state]
   help                         Show usage
 ```
@@ -33,38 +35,32 @@ The encryption key is at `/etc/claude-api-gateway/encryption.key` (256-bit AES k
 
 If the key is rotated, all previously issued tokens become invalid and must be re-encrypted.
 
-## Services
+## Server
 
-### Verifier
+Combined HTTP server on `127.0.0.1:9123` that handles both token verification and the rate limit dashboard.
 
-HTTP server on `127.0.0.1:9123` that decrypts and validates tokens. Caddy uses `forward_auth` to check every request against this service.
+- `/verify` — token decryption and validation (used by Caddy `forward_auth`)
+- `/` — dashboard HTML
+- `/api`, `/json` — dashboard JSON API
 
 ```bash
-systemctl status claude-api-gateway-verifier
-systemctl restart claude-api-gateway-verifier
+systemctl status claude-api-gateway
+systemctl restart claude-api-gateway
 ```
 
-### Dashboard
-
-HTTP server on `127.0.0.1:9124` that monitors Caddy access logs and tracks rate limit status for all tokens.
-
-- **Dashboard:** `https://<your-domain>/status`
-- **JSON API:** `https://<your-domain>/status/api`
-
-**How it works:**
+**Dashboard features:**
 
 - Background thread tails `/var/log/caddy/access.log`
-- Processes ALL responses (not just 429s) to extract `Anthropic-Ratelimit-Unified-*` headers (utilization, status, reset time)
-- Updates `retry_after` and `reset_ts` only on 429 responses
+- Processes ALL responses to extract `Anthropic-Ratelimit-Unified-*` headers
+- Detects banned tokens (HTTP 403) and marks them with a "Banned" badge
 - Tokens persist in a JSON state file, surviving service restarts
-- Time-based auto-reset: tokens show "Available" once the reset time passes, even without a new request
-- Appends to `ratelimit.log` only on 429 responses
+- Time-based auto-reset: tokens show "Available" once the reset time passes
 
 **CLI flags:**
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `-p` | HTTP port | `9124` |
+| `-p` | HTTP port | `9123` |
 | `-l` | Caddy access log path | `/var/log/caddy/access.log` |
 | `-s` | JSON state file path | `/var/lib/caddy/ratelimit-state.json` |
 
@@ -80,8 +76,7 @@ Source code is deployed to `/opt/claude-api-gateway/` on the server.
 ```bash
 cd /opt/claude-api-gateway
 make clean && make && make install
-systemctl restart claude-api-gateway-verifier
-systemctl restart claude-api-gateway-dashboard
+systemctl restart claude-api-gateway
 ```
 
 ## Logs & State
