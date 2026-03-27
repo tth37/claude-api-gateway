@@ -46,7 +46,7 @@ static const char HTML_HEAD[] =
     "<head>\n"
     "<meta charset=\"utf-8\">\n"
     "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
-    "<title>Rate Limit Dashboard</title>\n"
+    "<title>Claude API Gateway</title>\n"
     "<script src=\"https://cdn.tailwindcss.com\"></script>\n"
     "<style>\n"
     "  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');\n"
@@ -57,8 +57,8 @@ static const char HTML_HEAD[] =
     "<body class=\"bg-gray-50 min-h-screen\">\n"
     "<div class=\"max-w-5xl mx-auto px-4 py-8 sm:px-6 lg:px-8\">\n"
     "  <div class=\"mb-8\">\n"
-    "    <h1 class=\"text-2xl font-semibold text-gray-900\">Rate Limit Dashboard</h1>\n"
-    "    <p class=\"mt-1 text-sm text-gray-500\">Claude API Gateway token status</p>\n"
+    "    <h1 class=\"text-2xl font-semibold text-gray-900\">Claude API Gateway</h1>\n"
+    "    <p class=\"mt-1 text-sm text-gray-500\">Token status &amp; rate limits</p>\n"
     "  </div>\n";
 
 static const char HTML_TABLE_START[] =
