@@ -97,11 +97,12 @@ static void save_state(void) {
         fprintf(f, "{\"prefix\":\"%s\",\"retry_after\":%ld,"
                 "\"reset_ts\":%ld,\"util_5h\":%.4f,\"util_7d\":%.4f,"
                 "\"status_5h\":\"%s\",\"status_7d\":\"%s\","
-                "\"window\":\"%s\",\"last_seen\":%ld}",
+                "\"window\":\"%s\",\"last_seen\":%ld,\"banned\":%d}",
                 g_tokens[i].prefix, g_tokens[i].retry_after,
                 g_tokens[i].reset_ts, g_tokens[i].util_5h, g_tokens[i].util_7d,
                 g_tokens[i].status_5h, g_tokens[i].status_7d,
-                g_tokens[i].window, (long)g_tokens[i].last_seen);
+                g_tokens[i].window, (long)g_tokens[i].last_seen,
+                g_tokens[i].banned);
     }
     fprintf(f, "\n]}\n");
     fclose(f);
@@ -166,6 +167,8 @@ static void load_state(void) {
         json_get_str(obj, "status_5h", t->status_5h, sizeof(t->status_5h));
         json_get_str(obj, "status_7d", t->status_7d, sizeof(t->status_7d));
         json_get_str(obj, "window", t->window, sizeof(t->window));
+        long b = json_get_long(obj, "banned");
+        t->banned = (b > 0) ? 1 : 0;
         t->last_seen = this_last_seen;
         t->active = 1;
         if (dup < 0) slot++;
@@ -223,13 +226,17 @@ static void process_line(const char *line) {
 
     long status = json_get_long(line, "status");
     int is_429 = (status == 429);
+    int is_403 = (status == 403);
 
     double u5 = json_get_double(line, "Anthropic-Ratelimit-Unified-5h-Utilization");
     double u7 = json_get_double(line, "Anthropic-Ratelimit-Unified-7d-Utilization");
-    if (u5 < 0 && u7 < 0 && !is_429) return;
+    if (u5 < 0 && u7 < 0 && !is_429 && !is_403) return;
 
     pthread_mutex_lock(&g_lock);
     token_state_t *t = find_or_alloc(prefix);
+
+    if (is_403) t->banned = 1;
+    else t->banned = 0;
 
     if (u5 >= 0) t->util_5h = u5;
     if (u7 >= 0) t->util_7d = u7;

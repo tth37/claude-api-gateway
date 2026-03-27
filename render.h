@@ -17,6 +17,7 @@ typedef struct {
     char status_7d[16];
     char window[16];
     time_t last_seen;
+    int  banned;
 } token_state_t;
 
 extern token_state_t g_tokens[MAX_TOKENS];

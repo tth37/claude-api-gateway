@@ -204,7 +204,10 @@ int render_html(char *buf, int maxlen) {
 
         /* Status badge */
         const char *badge_class, *badge_text;
-        if (is_limited) {
+        if (t->banned) {
+            badge_class = "bg-red-100 text-red-700 border-red-200";
+            badge_text = "Banned";
+        } else if (is_limited) {
             badge_class = "bg-red-100 text-red-700 border-red-200";
             badge_text = "Rate Limited";
         } else if (newly_available) {
@@ -221,10 +224,17 @@ int render_html(char *buf, int maxlen) {
         /* Countdown: only show if currently rate limited */
         long countdown_val = (is_limited && t->reset_ts > 0) ? t->reset_ts : 0;
 
+        const char *row_class, *row_title = "";
+        if (t->banned) {
+            row_class = "hover:bg-gray-50/50 transition-colors line-through opacity-50";
+        } else if (stale) {
+            row_class = "hover:bg-gray-50/50 transition-colors opacity-50";
+            row_title = " title=\"No activity in the past 5 hours — usage data may be outdated\"";
+        } else {
+            row_class = "hover:bg-gray-50/50 transition-colors";
+        }
         n += snprintf(buf + n, maxlen - n,
-            stale ?
-            "          <tr class=\"hover:bg-gray-50/50 transition-colors opacity-50\" title=\"No activity in the past 5 hours — usage data may be outdated\">\n" :
-            "          <tr class=\"hover:bg-gray-50/50 transition-colors\">\n");
+            "          <tr class=\"%s\"%s>\n", row_class, row_title);
         n += snprintf(buf + n, maxlen - n,
             "            <td class=\"px-4 py-3\">"
               "<span class=\"mono text-sm font-medium text-gray-900\">%s</span>"
@@ -325,7 +335,8 @@ int render_json(char *buf, int maxlen) {
             "\"retry_after\":%ld,\"reset_ts\":%ld,"
             "\"util_5h\":%.2f,\"util_7d\":%.2f,"
             "\"status_5h\":\"%s\",\"status_7d\":\"%s\","
-            "\"window\":\"%s\",\"last_seen\":%ld}",
+            "\"window\":\"%s\",\"last_seen\":%ld,"
+            "\"banned\":%s}",
             display,
             is_limited ? "true" : "false",
             newly_available ? "true" : "false",
@@ -333,7 +344,8 @@ int render_json(char *buf, int maxlen) {
             t->util_5h >= 0 ? t->util_5h : 0,
             t->util_7d >= 0 ? t->util_7d : 0,
             t->status_5h, t->status_7d,
-            t->window, (long)t->last_seen);
+            t->window, (long)t->last_seen,
+            t->banned ? "true" : "false");
     }
     n += snprintf(buf + n, maxlen - n, "]}");
     return n;
