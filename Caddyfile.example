@@ -29,6 +29,17 @@ https://your-domain.example.com {
 			header_up -X-Forwarded-Port
 			header_up -Via
 			header_up -X-Api-Key
+			header_up User-Agent "anthropic-sdk/1.0"
+			header_up -X-Stainless-Os
+			header_up -X-Stainless-Arch
+			header_up -X-Stainless-Runtime
+			header_up -X-Stainless-Runtime-Version
+			header_up -X-Stainless-Package-Version
+			header_up -X-Stainless-Lang
+			header_up -X-Stainless-Retry-Count
+			header_up -X-Stainless-Timeout
+			header_up -X-App
+			header_up -Anthropic-Dangerous-Direct-Browser-Access
 
 			handle_response {
 				header X-Debug-Token "{http.request.header.Authorization}"
