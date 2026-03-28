@@ -226,16 +226,16 @@ static void process_line(const char *line) {
 
     long status = json_get_long(line, "status");
     int is_429 = (status == 429);
-    int is_403 = (status == 403);
+    int is_banned = (status == 400 || status == 401 || status == 403);
 
     double u5 = json_get_double(line, "Anthropic-Ratelimit-Unified-5h-Utilization");
     double u7 = json_get_double(line, "Anthropic-Ratelimit-Unified-7d-Utilization");
-    if (u5 < 0 && u7 < 0 && !is_429 && !is_403) return;
+    if (u5 < 0 && u7 < 0 && !is_429 && !is_banned) return;
 
     pthread_mutex_lock(&g_lock);
     token_state_t *t = find_or_alloc(prefix);
 
-    if (is_403) t->banned = 1;
+    if (is_banned) t->banned = 1;
     else t->banned = 0;
 
     if (u5 >= 0) t->util_5h = u5;
