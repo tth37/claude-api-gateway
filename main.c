@@ -2,6 +2,7 @@
 #include <string.h>
 
 extern int encrypt_main(int argc, char **argv);
+extern int setup_main(int argc, char **argv);
 extern int verifier_main(int argc, char **argv);
 extern int dashboard_main(int argc, char **argv);
 extern int server_main(int argc, char **argv);
@@ -12,6 +13,7 @@ static void print_usage(const char *prog) {
         "Usage: %s <command> [args]\n"
         "\n"
         "Commands:\n"
+        "  setup                        Generate encryption key (first-time setup)\n"
         "  encrypt <raw-token>          Encrypt an API token\n"
         "  start server [-p port]       Start the combined server (verifier + dashboard)\n"
         "               [-l log] [-s state]\n"
@@ -28,6 +30,9 @@ static void print_usage(const char *prog) {
 
 int main(int argc, char *argv[]) {
     if (argc < 2) { print_usage(argv[0]); return 1; }
+
+    if (strcmp(argv[1], "setup") == 0)
+        return setup_main(argc - 1, argv + 1);
 
     if (strcmp(argv[1], "encrypt") == 0)
         return encrypt_main(argc - 1, argv + 1);

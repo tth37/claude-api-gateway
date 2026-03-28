@@ -13,6 +13,8 @@ static const char UNIT_FILE[] =
     "\n"
     "[Service]\n"
     "Type=simple\n"
+    "User=caddy\n"
+    "Group=caddy\n"
     "ExecStart=/usr/local/bin/claude-api-gateway start server\n"
     "Restart=always\n"
     "RestartSec=3\n"

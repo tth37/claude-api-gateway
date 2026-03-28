@@ -8,6 +8,7 @@ A reverse proxy gateway for the Anthropic API built with Caddy. Tokens are prote
 claude-api-gateway <command> [args]
 
 Commands:
+  setup                        Generate encryption key (first-time setup)
   encrypt <raw-token>          Encrypt an API token
   start server [-p port]       Start the combined server (verifier + dashboard)
                [-l log] [-s state]
@@ -69,7 +70,8 @@ systemctl restart claude-api-gateway
 ```bash
 make clean && make
 sudo make install
-sudo claude-api-gateway service install
+sudo claude-api-gateway setup           # First-time: generates encryption key
+sudo claude-api-gateway service install  # Install systemd service
 sudo claude-api-gateway service start
 ```
 
