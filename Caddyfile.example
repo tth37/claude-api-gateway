@@ -29,7 +29,7 @@ https://your-domain.example.com {
 			header_up -X-Forwarded-Port
 			header_up -Via
 			header_up -X-Api-Key
-			header_up User-Agent "anthropic-sdk/1.0"
+			header_up User-Agent "claude-cli/2.1.86 (external, cli)"
 			header_up -X-Stainless-Os
 			header_up -X-Stainless-Arch
 			header_up -X-Stainless-Runtime
