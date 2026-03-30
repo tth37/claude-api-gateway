@@ -3,7 +3,7 @@ CFLAGS  = -Wall -Wextra -O2
 LDFLAGS = -lssl -lcrypto -lpthread
 
 TARGET  = claude-api-gateway
-SRCS    = main.c encrypt.c setup.c verifier.c dashboard.c server.c service.c crypto.c httpserver.c render.c
+SRCS    = main.c encrypt.c setup.c purge.c verifier.c dashboard.c server.c service.c crypto.c httpserver.c render.c
 OBJS    = $(SRCS:.c=.o)
 
 PREFIX  = /usr/local/bin

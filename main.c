@@ -7,6 +7,7 @@ extern int verifier_main(int argc, char **argv);
 extern int dashboard_main(int argc, char **argv);
 extern int server_main(int argc, char **argv);
 extern int service_main(int argc, char **argv);
+extern int purge_main(int argc, char **argv);
 
 static void print_usage(const char *prog) {
     fprintf(stderr,
@@ -20,6 +21,7 @@ static void print_usage(const char *prog) {
         "  start verifier [-p port]     Start the token verifier only\n"
         "  start dashboard [-p port]    Start the dashboard only\n"
         "                  [-l log] [-s state]\n"
+        "  purge [-s state]             Remove banned tokens from state\n"
         "  service install              Install systemd service\n"
         "  service uninstall            Remove systemd service\n"
         "  service start|stop|restart   Control the service\n"
@@ -52,6 +54,9 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Unknown service: %s\n", argv[2]);
         return 1;
     }
+
+    if (strcmp(argv[1], "purge") == 0)
+        return purge_main(argc - 1, argv + 1);
 
     if (strcmp(argv[1], "service") == 0)
         return service_main(argc - 1, argv + 1);
